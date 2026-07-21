@@ -50,19 +50,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
         gap: '12px',
         borderBottom: '1px solid rgba(255, 255, 255, 0.05)'
       }}>
-        <div style={{
-          width: '38px',
-          height: '38px',
-          borderRadius: '10px',
-          background: 'radial-gradient(circle, rgba(239,68,68,0.25) 0%, rgba(17,21,31,1) 100%)',
-          border: '1px solid var(--accent-red)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          boxShadow: 'var(--shadow-glow-red)'
-        }}>
-          <ShieldAlert size={22} color="var(--accent-red-glow)" className="animate-glow" />
-        </div>
+        <img 
+          src="/logo.png" 
+          alt="ARGUS Logo" 
+          style={{
+            width: '38px',
+            height: '38px',
+            objectFit: 'contain',
+            filter: 'drop-shadow(0 0 8px rgba(239, 68, 68, 0.5))'
+          }}
+        />
         <div>
           <h1 style={{
             fontFamily: 'var(--font-heading)',
