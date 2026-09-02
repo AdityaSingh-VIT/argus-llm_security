@@ -12,27 +12,33 @@ import os
 from datetime import datetime, timezone
 from typing import List
 
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import cm
-from reportlab.platypus import (
-    HRFlowable,
-    Paragraph,
-    SimpleDocTemplate,
-    Spacer,
-    Table,
-    TableStyle,
-)
+try:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import cm
+    from reportlab.platypus import (
+        HRFlowable,
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    REPORTLAB_AVAILABLE = False
+    colors = None
 
 from models.db_models import AttackResult, ScanJob
 
 logger = logging.getLogger("argus.services.report")
-
 REPORTS_DIR: str = os.getenv("REPORTS_DIR", "./reports")
 
 
-def _score_color(score: float) -> colors.HexColor:
+def _score_color(score: float):
+    if not REPORTLAB_AVAILABLE:
+        return None
     if score >= 80:
         return colors.HexColor("#ef4444")
     if score >= 50:
@@ -55,10 +61,15 @@ def _score_label(score: float) -> str:
 async def generate_pdf(scan: ScanJob, attacks: List[AttackResult]) -> str:
     """Build the PDF and return its absolute file path."""
     os.makedirs(REPORTS_DIR, exist_ok=True)
-
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     filename = f"argus_report_{scan.id[:8]}_{ts}.pdf"
     file_path = os.path.join(REPORTS_DIR, filename)
+
+    if not REPORTLAB_AVAILABLE:
+        # Fallback to plain text / mock pdf bytes if reportlab is not installed
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(f"ARGUS SECURITY REPORT\nScan ID: {scan.id}\nTarget: {scan.target_url}\nAttacks: {len(attacks)}")
+        return file_path
 
     doc = SimpleDocTemplate(
         file_path,
@@ -70,7 +81,6 @@ async def generate_pdf(scan: ScanJob, attacks: List[AttackResult]) -> str:
     )
 
     styles = getSampleStyleSheet()
-
     title_style = ParagraphStyle(
         "ArgusTitle",
         parent=styles["Heading1"],
@@ -156,7 +166,7 @@ async def generate_pdf(scan: ScanJob, attacks: List[AttackResult]) -> str:
             header_style = ParagraphStyle(
                 f"AH{i}",
                 parent=body_style,
-                textColor=color,
+                textColor=color or colors.HexColor("#0f172a"),
                 fontSize=10,
                 spaceBefore=10,
                 fontName="Helvetica-Bold",
