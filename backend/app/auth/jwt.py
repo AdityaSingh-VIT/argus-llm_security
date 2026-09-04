@@ -1,14 +1,14 @@
 """
-auth/jwt.py — JWT token creation, decoding, and password hashing.
+auth/jwt.py — JWT token creation, decoding, and password hashing using bcrypt directly.
 """
 
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import bcrypt
 from dotenv import load_dotenv
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from models.schemas import TokenPayload
 
@@ -18,17 +18,19 @@ SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "change-me-in-production-please")
 ALGORITHM: str = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 
 def hash_password(plain: str) -> str:
     """Return a bcrypt hash of the plain-text password."""
-    return pwd_context.hash(plain)
+    pwd_bytes = plain.encode("utf-8")
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(pwd_bytes, salt).decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
     """Return True if plain matches the bcrypt hash."""
-    return pwd_context.verify(plain, hashed)
+    pwd_bytes = plain.encode("utf-8")
+    hashed_bytes = hashed.encode("utf-8")
+    return bcrypt.checkpw(pwd_bytes, hashed_bytes)
 
 
 def create_access_token(subject: str, expires_delta: Optional[timedelta] = None) -> str:

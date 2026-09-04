@@ -1,0 +1,90 @@
+version: "3.8"
+
+services:
+  neo4j:
+    image: neo4j:5.20
+    container_name: argus-neo4j
+    environment:
+      - NEO4J_AUTH=neo4j/arguspassword123
+      - NEO4J_PLUGINS=["apoc", "graph-data-science"]
+    ports:
+      - "7474:7474" # HTTP Browser
+      - "7687:7687" # Bolt Protocol
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "arguspassword123", "RETURN 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: argus-backend
+    environment:
+      - MOCK_SERVICES=true
+      - DIGITAL_TWIN_URL=http://digital-twin:7001
+      - ATTACK_ENGINE_URL=http://attack-engine:7002
+      - CHATBOT_URL=http://chatbot:7003
+      - JWT_SECRET_KEY=argus-super-secret-production-key-change-me
+    ports:
+      - "8000:8000"
+    depends_on:
+      - neo4j
+    restart: on-failure
+
+  digital-twin:
+    build:
+      context: ./digital-twin
+      dockerfile: Dockerfile
+    container_name: argus-digital-twin
+    environment:
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=arguspassword123
+    ports:
+      - "7001:7001"
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    restart: on-failure
+
+  attack-engine:
+    build:
+      context: ./attack-engine
+      dockerfile: Dockerfile
+    container_name: argus-attack-engine
+    environment:
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=arguspassword123
+    ports:
+      - "7002:7002"
+    restart: on-failure
+
+  chatbot:
+    build:
+      context: ./chatbot
+      dockerfile: Dockerfile
+    container_name: argus-chatbot
+    environment:
+      - DEFENSE_LEVEL=0
+    ports:
+      - "7003:7003"
+    restart: on-failure
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: argus-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: on-failure
+
+volumes:
+  neo4j_data:

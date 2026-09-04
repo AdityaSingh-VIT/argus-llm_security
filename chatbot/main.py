@@ -1,9 +1,17 @@
+import os
+import sys
+import socket
+import threading
+import webbrowser
+import time
 import uvicorn
 from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any
 
-from rag_agent import rag_manager, process_chat_message  # noqa: F401 (process_chat_message used in /chat)
+from rag_agent import rag_manager, process_chat_message
 
 app = FastAPI(
     title="Argus Target Practice Dummy AI",
@@ -11,22 +19,31 @@ app = FastAPI(
     version="1.0.0"
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Request Model
 class ChatRequest(BaseModel):
     message: str
+    session_id: str = "session-001"
 
 # Response Models
+# We include both 'reply' and 'response' to satisfy both the browser UI and Argus backend contract!
 class ChatResponse(BaseModel):
     reply: str
+    response: str
+    session_id: str = "session-001"
 
 class DocumentInfo(BaseModel):
     filename: str
     pages: int
     chunks_created: int
     char_count: int
-
-
-from fastapi.responses import HTMLResponse
 
 HTML_CHAT_INTERFACE = """
 <!DOCTYPE html>
@@ -76,14 +93,11 @@ HTML_CHAT_INTERFACE = """
         .metric-value { font-size: 1.15rem; font-weight: 700; color: var(--text-main); font-family: 'Fira Code', monospace; }
         .tag-success { background: rgba(0, 201, 255, 0.12); color: var(--secondary-teal); border: 1px solid rgba(0, 201, 255, 0.3); font-size: 0.65rem; padding: 0.1rem 0.4rem; border-radius: 3px; font-weight: 700; }
         
-        /* Clean Data Visualization Sparkline */
         .sparkline { width: 45px; height: 16px; display: flex; align-items: flex-end; gap: 2px; }
         .bar { flex: 1; background: var(--secondary-teal); border-radius: 1px; }
 
-        /* Main Layout Container */
         .container { display: flex; flex: 1; overflow: hidden; }
 
-        /* Sidebar Panel */
         .sidebar { width: 330px; background: var(--panel-bg); border-right: 1px solid var(--border-color); padding: 1.25rem; display: flex; flex-direction: column; gap: 1.25rem; }
         .sidebar-title { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.08em; display: flex; align-items: center; justify-content: space-between; }
         
@@ -98,11 +112,9 @@ HTML_CHAT_INTERFACE = """
         .file-name { font-weight: 600; color: var(--text-main); word-break: break-all; }
         .file-meta { font-size: 0.7rem; color: var(--secondary-teal); font-family: 'Fira Code', monospace; }
 
-        /* Chat Workspace */
         .chat-area { flex: 1; display: flex; flex-direction: column; background: var(--bg-dark); position: relative; }
         .messages { flex: 1; padding: 1.5rem; overflow-y: auto; display: flex; flex-direction: column; gap: 1.25rem; }
         
-        /* Message Wrappers */
         .msg-wrapper { display: flex; gap: 0.85rem; max-width: 85%; animation: fadeIn 0.2s ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
         
@@ -117,12 +129,10 @@ HTML_CHAT_INTERFACE = """
         .msg-wrapper.user .msg-bubble { background: var(--panel-bg); color: var(--text-main); border-color: rgba(255, 46, 87, 0.4); border-bottom-right-radius: 2px; }
         .msg-wrapper.bot .msg-bubble { background: var(--panel-bg); color: var(--text-main); border-color: var(--border-color); border-bottom-left-radius: 2px; }
 
-        /* Action Quick Chips */
         .quick-chips { padding: 0.6rem 1.5rem; display: flex; gap: 0.6rem; overflow-x: auto; border-top: 1px solid var(--border-color); background: var(--panel-bg); }
         .chip { background: var(--card-bg); color: var(--text-muted); border: 1px solid var(--border-color); padding: 0.35rem 0.8rem; border-radius: 20px; font-size: 0.76rem; font-weight: 500; cursor: pointer; white-space: nowrap; transition: all 0.2s; }
         .chip:hover { background: rgba(0, 201, 255, 0.1); color: var(--secondary-teal); border-color: var(--secondary-teal); }
 
-        /* Input Controls */
         .input-area { padding: 1rem 1.5rem; background: var(--panel-bg); border-top: 1px solid var(--border-color); display: flex; gap: 0.75rem; align-items: center; }
         .input-box-container { flex: 1; }
         input[type="text"] { width: 100%; background: var(--bg-dark); border: 1px solid var(--border-color); color: var(--text-main); padding: 0.8rem 1.1rem; border-radius: 6px; outline: none; font-size: 0.92rem; transition: all 0.2s; }
@@ -149,7 +159,6 @@ HTML_CHAT_INTERFACE = """
         </div>
     </header>
 
-    <!-- Visual Performance Metrics Bar -->
     <div class="metrics-bar">
         <div class="metric-card">
             <div class="metric-label">
@@ -298,7 +307,7 @@ HTML_CHAT_INTERFACE = """
                     body: JSON.stringify({ message: text })
                 });
                 const data = await res.json();
-                addMessage(data.reply || data.detail || 'No response generated.', 'bot');
+                addMessage(data.reply || data.response || data.detail || 'No response generated.', 'bot');
             } catch (e) {
                 addMessage('Error communicating with chatbot server.', 'bot');
             }
@@ -329,35 +338,25 @@ HTML_CHAT_INTERFACE = """
 </html>
 """
 
-
 @app.get("/", response_class=HTMLResponse)
 def read_root():
     return HTMLResponse(content=HTML_CHAT_INTERFACE)
 
-
-
+@app.get("/health")
+def health_endpoint():
+    return {"status": "ok", "service": "target_chatbot"}
 
 @app.post("/chat", response_model=ChatResponse)
 def chat_endpoint(request: ChatRequest):
     if not request.message:
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
-
-    # Intentionally no input sanitization / injection filtering here - the raw
-    # message goes straight into RAG retrieval and the LLM prompt. That's the
-    # "no input sanitization" vulnerability this target app is meant to expose.
     reply = process_chat_message(request.message)
-    return ChatResponse(reply=reply)
-
+    return ChatResponse(reply=reply, response=reply, session_id=request.session_id)
 
 @app.post("/upload")
 async def upload_document_endpoint(file: UploadFile = File(...)):
-    """
-    Accepts PDF file upload, extracts raw document content, and embeds into FAISS vectorstore.
-    Blindly trusts document contents without indirect prompt injection filtering.
-    """
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
-    
     file_bytes = await file.read()
     if not file_bytes:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
@@ -372,73 +371,12 @@ async def upload_document_endpoint(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to parse PDF document: {str(e)}")
 
-
 @app.get("/document", response_model=List[Dict[str, Any]])
 def list_documents_endpoint():
-    """
-    Returns the metadata list of all documents uploaded and stored in the RAG vector database.
-    """
     return rag_manager.get_documents_list()
 
-
-import os
-import sys
-import socket
-import threading
-import webbrowser
-import time
-
-def get_free_port(preferred_port=8500):
-    """Obtains a guaranteed free TCP port from the operating system."""
-    for p in range(preferred_port, preferred_port + 20):
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind(("127.0.0.1", p))
-                return p
-        except OSError:
-            continue
-    # Let OS assign a free port dynamically
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-def open_browser(url):
-    time.sleep(1.5)
-    try:
-        webbrowser.open(url)
-    except Exception:
-        pass
-
 if __name__ == "__main__":
-    start_p = int(sys.argv[1]) if len(sys.argv) > 1 else int(os.getenv("PORT", 8500))
-    host = os.getenv("HOST", "127.0.0.1")
-    
-    # Try starting uvicorn server on a guaranteed free port
-    for attempt in range(10):
-        port = get_free_port(start_p + attempt * 2)
-        target_url = f"http://{host}:{port}"
-        
-        print(f"\n=======================================================")
-        print(f"🚀 Argus Target Dummy Chatbot Application")
-        print(f"🌐 Web App URL: {target_url}")
-        print(f"📖 API Documentation: {target_url}/docs")
-        print(f"=======================================================\n")
-        
-        # Launch browser automatically
-        threading.Thread(target=open_browser, args=(target_url,), daemon=True).start()
-        
-        try:
-            uvicorn.run("main:app", host=host, port=port, log_level="info")
-            break
-        except OSError as e:
-            if "10048" in str(e) or "10013" in str(e):
-                print(f"Port {port} busy, retrying next port...")
-                time.sleep(0.5)
-                continue
-            else:
-                raise e
-
-
-
-
-
+    port = int(os.getenv("PORT", 7003))
+    host = os.getenv("HOST", "0.0.0.0")
+    print(f"🚀 Argus Target Chatbot running on http://{host}:{port}")
+    uvicorn.run("main:app", host=host, port=port, reload=True)

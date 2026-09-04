@@ -1,12 +1,16 @@
 """tests/test_scan.py — Scan endpoint tests."""
 
 import pytest
-from unittest.mock import AsyncMock, patch
+import uuid
 
 
 async def _get_token(client) -> str:
-    r = await client.post("/auth/register", json={"username": "scanuser", "password": "pw"})
-    return r.json()["access_token"]
+    username = f"scanuser_{uuid.uuid4().hex[:8]}"
+    r = await client.post("/auth/register", json={"username": username, "password": "pw"})
+    if r.status_code == 201:
+        return r.json()["access_token"]
+    login_r = await client.post("/auth/login", json={"username": username, "password": "pw"})
+    return login_r.json()["access_token"]
 
 
 @pytest.mark.asyncio
